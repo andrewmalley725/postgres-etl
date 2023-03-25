@@ -4,6 +4,22 @@ import requests
 import pandas as pd
 import creds
 
+conn = psycopg2.connect(
+    host=creds.dbhost,
+    database=creds.db,
+    user=creds.dbUser,
+    password=creds.dbPassword
+)
+
+cur = conn.cursor()
+
+cur.execute('drop table player_stats;')
+cur.execute('drop table players;')
+cur.execute('drop table categories;')
+
+conn.commit()
+
+
 url = 'https://www.espn.com/nba/stats'
 
 res = requests.get(url)
@@ -40,7 +56,7 @@ for i in categories:
         player = {
             'first_name': name[0],
             'last_name': name[1],
-            i: points[0]
+            'stat': points[0]
         }
         obj['players'].append(player)
         players.pop(0)
@@ -72,15 +88,6 @@ for i in player_categories:
         new_record['stat'] = p['stat']
         stats_df = stats_df.append(new_record, ignore_index=True)
 
-conn = psycopg2.connect(
-    host=creds.dbhost,
-    database=creds.db,
-    user=creds.dbUser,
-    password=creds.dbPassword
-)
-
-cur = conn.cursor()
-
 cur.execute("""
     CREATE TABLE IF NOT EXISTS players (
         id SERIAL PRIMARY KEY,
@@ -95,4 +102,34 @@ for i, row in players_df.iterrows():
         VALUES (%s, %s);
     """, (row['first_name'], row['last_name']))
 
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS categories (
+        id SERIAL PRIMARY KEY,
+        category TEXT
+    );
+""")
+
+for i, row in categories_df.iterrows():
+    cur.execute("""
+        INSERT INTO categories (category)
+        VALUES (%s);
+    """, (row['category'],))
+
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS player_stats (
+        id SERIAL PRIMARY KEY,
+        player_id integer references players(id),
+        category_id integer references categories(id),
+        stat double precision
+    );
+""")
+
+for i, row in stats_df.iterrows():
+    cur.execute("""
+        INSERT INTO player_stats (player_id, category_id, stat)
+        VALUES (%s, %s, %s);
+    """, (row['player_id'] + 1, row['category_id'] + 1, row['stat']))
+
 conn.commit()
+conn.close()
+
