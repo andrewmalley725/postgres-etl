@@ -140,21 +140,24 @@ threes_made = """
             from players as p
             inner join player_stats as ps ON ps.player_id = p.id
             inner join categories as c ON c.id = ps.category_id
-            where c.category = '3-Pointers Made';"""
+            where c.category = '3-Pointers Made'
+            order by threes_made desc;"""
 
 top_scorers = """
                 select p.firstname, p.lastname, ps.stat as points
                 from players as p
                 inner join player_stats as ps ON ps.player_id = p.id
                 inner join categories as c ON c.id = ps.category_id
-                where c.category = 'Points';"""
+                where c.category = 'Points'
+                order by points desc;"""
 
 top_assists = """
                 select p.firstname, p.lastname, ps.stat as assists
                 from players as p
                 inner join player_stats as ps ON ps.player_id = p.id
                 inner join categories as c ON c.id = ps.category_id
-                where c.category = 'Assists'; """
+                where c.category = 'Assists'
+                order by assists desc; """
 
 cur.execute('create view top_three_point_scorers as ' + threes_made)
 cur.execute('create view top_scorers as ' + top_scorers)
