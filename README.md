@@ -1,0 +1,2 @@
+# This is a python script that scrapes nba player stats form ESPN and stores it in a relational schema in PostgreSQL
+## script currntly scrapes top offensive players
