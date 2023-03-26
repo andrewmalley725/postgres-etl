@@ -13,9 +13,14 @@ conn = psycopg2.connect(
 
 cur = conn.cursor()
 
+cur.execute('drop view top_scorers;')
+cur.execute('drop view top_assists;')
+cur.execute('drop view top_three_point_scorers;')
+
 cur.execute('drop table player_stats;')
 cur.execute('drop table players;')
 cur.execute('drop table categories;')
+
 
 conn.commit()
 
@@ -129,6 +134,31 @@ for i, row in stats_df.iterrows():
         INSERT INTO player_stats (player_id, category_id, stat)
         VALUES (%s, %s, %s);
     """, (row['player_id'] + 1, row['category_id'] + 1, row['stat']))
+
+threes_made = """
+            select p.firstname, p.lastname, ps.stat as threes_made
+            from players as p
+            inner join player_stats as ps ON ps.player_id = p.id
+            inner join categories as c ON c.id = ps.category_id
+            where c.category = '3-Pointers Made';"""
+
+top_scorers = """
+                select p.firstname, p.lastname, ps.stat as points
+                from players as p
+                inner join player_stats as ps ON ps.player_id = p.id
+                inner join categories as c ON c.id = ps.category_id
+                where c.category = 'Points';"""
+
+top_assists = """
+                select p.firstname, p.lastname, ps.stat as assists
+                from players as p
+                inner join player_stats as ps ON ps.player_id = p.id
+                inner join categories as c ON c.id = ps.category_id
+                where c.category = 'Assists'; """
+
+cur.execute('create view top_three_point_scorers as ' + threes_made)
+cur.execute('create view top_scorers as ' + top_scorers)
+cur.execute('create view top_assists as ' + top_assists)
 
 conn.commit()
 conn.close()
