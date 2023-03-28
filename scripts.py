@@ -13,18 +13,48 @@ conn = psycopg2.connect(
 
 cur = conn.cursor()
 
-cur.execute('drop view top_scorers;')
-cur.execute('drop view top_assists;')
-cur.execute('drop view top_three_point_scorers;')
+cur.execute('drop table player_stats')
+cur.execute('drop table players')
+cur.execute('drop table positions')
 
-cur.execute('drop table player_stats;')
-cur.execute('drop table players;')
-cur.execute('drop table categories;')
+cur.execute('''create table if not exists positions (
+    id serial primary key,
+    position_name text
+);''')
+
+cur.execute('''create table if not exists players (
+    id serial primary key,
+    firstname text,
+    lastname text,
+    position_id integer references positions(id)
+);''')
+            
+cur.execute('''CREATE TABLE IF NOT EXISTS player_stats (
+    id serial PRIMARY KEY,
+    player_id bigint REFERENCES players(id),
+    GP double precision NULL,
+    MIN double precision NULL,
+    PTS double precision NULL,
+    FGM double precision NULL,
+    FGA double precision NULL,
+    FG_percentage double precision NULL,
+    TPM double precision NULL,
+    TPA double precision NULL,
+    TP_percentage double precision NULL,
+    FTM double precision NULL,
+    FTA double precision NULL,
+    FT_percentage double precision NULL,
+    REB double precision NULL,
+    AST double precision NULL,
+    STL double precision NULL,
+    BLK double precision NULL,
+    T_O double precision NULL,
+    DD double precision NULL,
+    TD double precision NULL
+);''')
 
 
-conn.commit()
-
-
+            
 url = 'https://www.espn.com/nba/stats'
 
 res = requests.get(url)
@@ -35,134 +65,100 @@ soup = BeautifulSoup(html, 'html.parser')
 
 offLeads = soup.find('div', {'class' : 'mb1'})
 
-categories = offLeads.select('th', {'class' : 'TABLE_TH', 'title': ''})
+categories = offLeads.find_all('tr', {'class' : 'Table__TR Table__even'})
 
-categories = [i.text for i in categories if categories.index(i) % 2 == 0]
+categories = [i.find('th').text for i in categories]
 
-players = offLeads.select('a', {'class': 'AnchorLink flex items-center'})
+complete_link = offLeads.find('a', {'class': 'AnchorLink leadersTable__complete-list'})['href']
 
-points = offLeads.select('td', {'class': 'Table_TD'})
+stats_url = 'https://www.espn.com' + complete_link
 
-players = [i['href'] for i in players if 'https' in i['href']]
+req = requests.get(stats_url)
 
-points = [i.text for i in points if '.' in i.text]
+stats_html = req.text
 
-player_categories = []
+stats_soup = BeautifulSoup(stats_html, 'html.parser')
 
-for i in categories:
+player_stats = stats_soup.select('tr',{'class':'Table__TR Table__TR--sm Table__even'})
+
+stats = [i for i in player_stats if i.find('td',{'class':'position Table__TD'})]
+
+player_names = []
+
+stat_order = ['GP', 'MIN', 'PTS', 'FGM', 'FGA', 'FG%', '3PM', '3PA', '3P%', 'FTM', 'FTA', 'FT%', 'REB', 'AST', 'STL', 'BLK', 'TO', 'DD2', 'TD3']
+
+for i in player_stats:
+    if i.find('a',{'class':'AnchorLink'}) and i.get('data-idx'):
+        obj = {}
+        first_name = i.find('a',{'class':'AnchorLink'}).text.split(' ')[0]
+        last_name = i.find('a',{'class':'AnchorLink'}).text.split(' ')[1]
+        url = i.find('a',{'class':'AnchorLink'})['href']
+        obj['firstname'] = first_name
+        obj['lastname'] = last_name
+        obj['playerinfo'] = url
+        obj['index'] = i.get('data-idx')
+        player_names.append(obj)
+
+positions = []
+
+for i in stats:
+    index = i['data-idx']
+    for p in player_names:
+        if p.get('index') == index:
+            p['positionid'] = i.find('div', {'class': 'position'}).text
+            if i.find('div', {'class': 'position'}).text not in positions:
+                positions.append(i.find('div', {'class': 'position'}).text)
+            p_stats = i.find_all('td',{'class','Table__TD'})[1:]
+            for stat in p_stats:
+                number = stat.text
+                p[stat_order[p_stats.index(stat)]] = float(number)
+
+positions_table = []
+
+for i in range(1, len(positions) + 1):
     obj = {
-        'category': i,
-        'players': []
+        'pos_id': i,
+        'position':positions[i - 1]
     }
-    for count in range(5):
-        player_url = players[0]
-        index = player_url.rfind('/') + 1
-        name = player_url[index:].split('-', 1)
-        player = {
-            'first_name': name[0],
-            'last_name': name[1],
-            'stat': points[0]
-        }
-        obj['players'].append(player)
-        players.pop(0)
-        points.pop(0)
-    player_categories.append(obj)
+    positions_table.append(obj)
 
-players_df = pd.DataFrame(columns=['first_name', 'last_name'])
+for player in player_names:
+    for pos in positions_table:
+        if player['positionid'] == pos['position']:
+            player['positionid'] = pos['pos_id']
 
-categories_df = pd.DataFrame(columns=['category'])
+df = pd.DataFrame.from_records(player_names)
 
-for cat in player_categories:
-    categories_df = categories_df.append({'category': cat['category']}, ignore_index=True)
-    for player in cat['players']:
-        new_record = {'first_name':player['first_name'], 'last_name': player['last_name']}
-        players_df = players_df.append(new_record, ignore_index=True)
+df_pos = pd.DataFrame.from_records(positions_table, index='pos_id')
 
-columns = ['player_id','category_id','stat']
+df_player = df[['firstname', 'lastname', 'positionid']]
 
-stats_df = pd.DataFrame(columns=columns)
+df_player.index += 1
 
-for i in player_categories:
-    cat = i['category']
-    cat_id = categories_df.index.get_loc(categories_df[categories_df.category == cat].index[0])
-    for p in i['players']:
-        new_record = {}
-        new_record['category_id'] = cat_id
-        play_id = players_df.index.get_loc(players_df[(players_df.first_name == p['first_name']) & (players_df.last_name == p['last_name'])].index[0])
-        new_record['player_id'] = play_id
-        new_record['stat'] = p['stat']
-        stats_df = stats_df.append(new_record, ignore_index=True)
+df_stats = df[['GP', 'MIN', 'PTS', 'FGM', 'FGA', 'FG%', '3PM', '3PA', '3P%', 'FTM', 'FTA', 'FT%', 'REB', 'AST', 'STL', 'BLK', 'TO', 'DD2', 'TD3']]
+# df_stats['player_id'] = df_player.index
+# df_stats = df_stats[['player_id','GP', 'MIN', 'PTS', 'FGM', 'FGA', 'FG%', '3PM', '3PA', '3P%', 'FTM', 'FTA', 'FT%', 'REB', 'AST', 'STL', 'BLK', 'TO', 'DD2', 'TD3']]
+df_stats.insert(0, 'player_id', df_player.index)
 
-cur.execute("""
-    CREATE TABLE IF NOT EXISTS players (
-        id SERIAL PRIMARY KEY,
-        firstname TEXT,
-        lastname TEXT
-    );
-""")
+for _, row in df_pos.iterrows():
+    cur.execute(
+        '''insert into positions (position_name)
+            values (%s);
+        ''', (row['position'],)
+    )
 
-for i, row in players_df.iterrows():
-    cur.execute("""
-        INSERT INTO players (firstname, lastname)
-        VALUES (%s, %s);
-    """, (row['first_name'], row['last_name']))
+for _, row in df_player.iterrows():
+    cur.execute(
+        '''insert into players (firstname, lastname, position_id)
+            values (%s, %s, %s);
+        ''', (row['firstname'], row['lastname'], row['positionid'])
+    )
 
-cur.execute("""
-    CREATE TABLE IF NOT EXISTS categories (
-        id SERIAL PRIMARY KEY,
-        category TEXT
-    );
-""")
+for i in range(len(df_stats)):
+    cur.execute('''INSERT INTO player_stats (player_id, GP, MIN, PTS, FGM, FGA, FG_percentage, TPM, TPA, TP_percentage, FTM, FTA, FT_percentage, REB, AST, STL, BLK, T_O, DD, TD)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
+                   (df_stats.iloc[i]['player_id'], df_stats.iloc[i]['GP'], df_stats.iloc[i]['MIN'], df_stats.iloc[i]['PTS'], df_stats.iloc[i]['FGM'], df_stats.iloc[i]['FGA'], df_stats.iloc[i]['FG%'], df_stats.iloc[i]['3PM'], df_stats.iloc[i]['3PA'], df_stats.iloc[i]['3P%'], df_stats.iloc[i]['FTM'], df_stats.iloc[i]['FTA'], df_stats.iloc[i]['FT%'], df_stats.iloc[i]['REB'], df_stats.iloc[i]['AST'], df_stats.iloc[i]['STL'], df_stats.iloc[i]['BLK'], df_stats.iloc[i]['TO'], df_stats.iloc[i]['DD2'], df_stats.iloc[i]['TD3']))
 
-for i, row in categories_df.iterrows():
-    cur.execute("""
-        INSERT INTO categories (category)
-        VALUES (%s);
-    """, (row['category'],))
-
-cur.execute("""
-    CREATE TABLE IF NOT EXISTS player_stats (
-        id SERIAL PRIMARY KEY,
-        player_id integer references players(id),
-        category_id integer references categories(id),
-        stat double precision
-    );
-""")
-
-for i, row in stats_df.iterrows():
-    cur.execute("""
-        INSERT INTO player_stats (player_id, category_id, stat)
-        VALUES (%s, %s, %s);
-    """, (row['player_id'] + 1, row['category_id'] + 1, row['stat']))
-
-threes_made = """
-            select p.firstname, p.lastname, ps.stat as threes_made
-            from players as p
-            inner join player_stats as ps ON ps.player_id = p.id
-            inner join categories as c ON c.id = ps.category_id
-            where c.category = '3-Pointers Made'
-            order by threes_made desc;"""
-
-top_scorers = """
-                select p.firstname, p.lastname, ps.stat as points
-                from players as p
-                inner join player_stats as ps ON ps.player_id = p.id
-                inner join categories as c ON c.id = ps.category_id
-                where c.category = 'Points'
-                order by points desc;"""
-
-top_assists = """
-                select p.firstname, p.lastname, ps.stat as assists
-                from players as p
-                inner join player_stats as ps ON ps.player_id = p.id
-                inner join categories as c ON c.id = ps.category_id
-                where c.category = 'Assists'
-                order by assists desc; """
-
-cur.execute('create view top_three_point_scorers as ' + threes_made)
-cur.execute('create view top_scorers as ' + top_scorers)
-cur.execute('create view top_assists as ' + top_assists)
-
+    
 conn.commit()
 conn.close()
-
